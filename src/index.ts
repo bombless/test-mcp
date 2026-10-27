@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { Request, Response } from "express";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -258,7 +259,7 @@ if (mode === "stdio") {
 
   await server.connect(transport);
 
-  app.get("/", (_req, res) => {
+  app.get("/", (_req: Request, res: Response) => {
     res.status(200).json({
       name: "test-mcp",
       status: "ok",
@@ -267,7 +268,7 @@ if (mode === "stdio") {
     });
   });
 
-  app.all("/mcp", async (req, res) => {
+  app.all("/mcp", async (req: Request, res: Response) => {
     try {
       await transport.handleRequest(req, res, req.body);
     } catch (error) {
