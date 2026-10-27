@@ -1,5 +1,8 @@
+import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
 import { z } from "zod";
 
 const server = new McpServer(
@@ -28,7 +31,6 @@ function textResult(value: unknown) {
 
 function errorSummary(error: unknown): string {
   if (error instanceof Error) {
-    // Keep diagnostics useful without returning request payloads or stack traces.
     return `${error.name}: ${error.message}`.slice(0, 500);
   }
   return String(error).slice(0, 500);
@@ -170,7 +172,6 @@ server.registerTool(
         startedAt,
         completedAt: new Date().toISOString(),
         action: result.action,
-        // The answer is a synthetic boolean only; no free-text personal data is requested.
         approveTest:
           result.action === "accept"
             ? result.content?.approveTest
@@ -242,5 +243,48 @@ server.registerTool(
     }),
 );
 
-const transport = new StdioServerTransport();
-await server.connect(transport);
+const mode = process.env.MCP_TRANSPORT ?? "stdio";
+
+if (mode === "stdio") {
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+} else if (mode === "http") {
+  // Single-session test server. Use one dedicated instance per test client.
+  const port = Number(process.env.PORT ?? 3000);
+  const app = createMcpExpressApp();
+  const transport = new StreamableHTTPServerTransport({
+    sessionIdGenerator: () => randomUUID(),
+  });
+
+  await server.connect(transport);
+
+  app.get("/", (_req, res) => {
+    res.status(200).json({
+      name: "test-mcp",
+      status: "ok",
+      endpoint: "/mcp",
+      note: "MCP Streamable HTTP test endpoint",
+    });
+  });
+
+  app.all("/mcp", async (req, res) => {
+    try {
+      await transport.handleRequest(req, res, req.body);
+    } catch (error) {
+      console.error("MCP HTTP request failed:", errorSummary(error));
+      if (!res.headersSent) {
+        res.status(500).json({
+          jsonrpc: "2.0",
+          error: { code: -32603, message: "Internal server error" },
+          id: null,
+        });
+      }
+    }
+  });
+
+  app.listen(port, "0.0.0.0", () => {
+    console.error(`test-mcp Streamable HTTP listening on port ${port}; endpoint /mcp`);
+  });
+} else {
+  throw new Error(`Unsupported MCP_TRANSPORT "${mode}". Use "stdio" or "http".`);
+}
